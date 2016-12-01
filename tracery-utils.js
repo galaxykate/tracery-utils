@@ -1,5 +1,85 @@
-function splitIntoTopSections(s, splitters) {
-	console.log(s);
+function test() {
+	var tests = ["[(#", "]", "[]"];
+	for (var i = 0; i < tests.length; i++) {
+		var s = createTraceryTestRule();
+		//s = "[foo:bax.whoo(bar)](bar)"
+		//splitOnUnprotected();
+		//	diagramParse(s, $("#panel-expansion .panel-content"));
+	}
+
+}
+
+
+function parseModifier(mod) {
+	console.log("mod: " + mod);
+	mod = mod.trim();
+	// get first and last parens
+	var parenIndex = mod.indexOf("(");
+	if (parenIndex >= 0) {
+		if (mod.charAt(mod.length - 1) !== ")")
+			console.warn("Poorly formed modifer");
+		return {
+			name: mod.substring(0, parenIndex),
+			parameters: splitOnUnprotected(mod.substring(parenIndex + 1, mod.length - 1), ",")
+		}
+	} else {
+		return {
+			name: mod
+		}
+	}
+
+}
+
+function parseTagContents(s) {
+
+	var sections = [];
+	sections.errors = [];
+	var start = 0;
+	parseProtected(s, {
+		onCloseSection: function(section) {
+			if (section.depth === 1 && section.openChar === "[") {
+				sections.push(section);
+				start = section.end + 1;
+			}
+
+		},
+
+		onOpenSection: function(section) {
+			if (section.depth === 1 && section.openChar === "[") {
+				var text = s.substring(start, section.start).trim();
+				if (text.length > 0) {
+					sections.push({
+						depth: 0,
+						start: start,
+						end: section.start,
+						inner: text
+					});
+				}
+			}
+
+		},
+
+		error: function(error) {
+			sections.errors.push(error);
+		}
+	});
+
+	var text = s.substring(start).trim();
+	if (text.length > 0) {
+		sections.push({
+			depth: 0,
+			start: start,
+			end: s.length,
+			inner: s.substring(start)
+		});
+	}
+
+	return sections;
+}
+
+
+
+function splitIntoTopSections(s) {
 
 	var sections = [];
 	sections.errors = [];
@@ -37,21 +117,11 @@ function splitIntoTopSections(s, splitters) {
 		inner: s.substring(start)
 	});
 
-	console.log(sections.map(function(s) {
-		return inQuotes(s.inner) + s.depth;
-	}).join("\t"));
 
-	console.log(sections.errors);
 	return sections;
 }
 
 
-var tests = ["[(#", "]", "[]"];
-for (var i = 0; i < tests.length; i++) {
-	var s = createTraceryTestRule();
-	//splitIntoTopSections(tests[i], ",");
-	testParse(s);
-}
 
 function createTraceryWord() {
 	var s = getRandom("abcdefghijklmnopqrstuvwxyz");
@@ -74,10 +144,10 @@ function createTraceryTestRule(depth) {
 			s += createTraceryWord();
 
 		} else {
-			if (Math.random() > .5) {
-				s += "#" + createTraceryWord() + "#"
+			if (Math.random() > .5 || depth > 2) {
+				s += "#" + createTraceryTestTag(depth + 1) + "#"
 			} else {
-				s += "[" + createTraceryWord() + "]"
+				s += "[" + createTraceryTestAction(depth + 1) + "]"
 			}
 		}
 		if (Math.random() > .6)
@@ -87,15 +157,54 @@ function createTraceryTestRule(depth) {
 }
 
 function createTraceryTestAction(depth) {
+
 	if (depth === undefined)
 		depth = 0;
 
+	return createTraceryWord() + ":" + createTraceryTestRule(depth + 1);
 }
+
+
+function createTraceryTestTag(depth) {
+	if (depth === undefined)
+		depth = 0;
+
+	var base = createTraceryWord(depth);
+	var count = Math.random() * 3;
+	for (var i = 0; i < count; i++) {
+		base += "." + createTraceryWord(depth);
+	}
+	return base;
+}
+
 
 function splitOnUnprotected(s, splitters) {
 	if (typeof splitters === 'string' || splitters instanceof String)
 		splitters = [splitters];
 
+	var sections = [];
+	var start = 0;
+	parseProtected(s, {
+		onChar: function(c, index, depth) {
+			if (depth === 0) {
+				var splitter = undefined;
+				for (var i = 0; i < splitters.length; i++) {
+
+
+					if (s.startsWith(splitters[i], index)) {
+						splitter = splitters[i];
+					}
+					if (splitter) {
+
+						sections.push(s.substring(start, index));
+						start = index + splitter.length;
+					}
+				}
+			}
+		},
+	})
+	sections.push(s.substring(start));
+	return sections;
 }
 
 function getUnprotectedIndices(s, splitters) {
@@ -119,6 +228,97 @@ function testParse(s) {
 		}
 	});
 }
+
+function diagramParse(s, holder) {
+	console.log("Diagram " + s);
+	var divStack = "";
+
+	function createDiv(holder, section) {
+		var div = $("<div/>", {
+			class: "traceryparse-section"
+		}).appendTo(holder);
+
+		var label = $("<div/>", {
+			class: "traceryparse-label",
+
+		}).appendTo(div);
+
+		if (section) {
+
+			if (section.openChar)
+				$("<div/>", {
+					class: "traceryparse-op",
+					html: section.openChar
+				}).appendTo(label);
+
+			$("<div/>", {
+				class: "traceryparse-text",
+				html: section.inner
+			}).appendTo(label);
+
+			if (section.closeChar)
+				$("<div/>", {
+					class: "traceryparse-op",
+					html: section.closeChar
+				}).appendTo(label);
+
+		} else {
+			label.html(s);
+		}
+
+		div.children = $("<div/>", {
+			class: "traceryparse-children",
+		}).appendTo(div);
+
+		if (section && section.children) {
+			$.each(section.children, function(index, child) {
+				createDiv(div.children, child);
+			})
+		}
+
+		return div;
+
+
+	}
+
+	var rootDiv = createDiv(holder);
+
+	var sectionStack = [];
+	var sections = [];
+	var rootSections = [];
+	parseProtected(s, {
+		onCloseSection: function(section) {
+			console.log(tabSpacer(section.depth) + section.openChar + "\t" + inQuotes(section.inner) + "\t" + section.closeChar);
+
+
+			sectionStack.pop(section);
+
+			if (sectionStack.length === 0) {
+				rootSections.push(section);
+			} else {
+				section.parent = sectionStack[sectionStack.length - 1];
+				section.parent.children.push(section);
+			}
+		},
+		onOpenSection: function(section) {
+			section.children = [];
+			sectionStack.push(section);
+			sections.push(section);
+		},
+
+		onError: function(s) {
+			console.log("ERROR: " + s);
+		}
+	});
+
+	$.each(rootSections, function(index, section) {
+		console.log(section);
+		createDiv(rootDiv.children, section);
+	});
+
+	console.log(rootSections);
+}
+
 
 function parseProtected(s, settings) {
 	// Defaults
