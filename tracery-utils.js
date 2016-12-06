@@ -1,108 +1,405 @@
-function test() {
-	var tests = ["[(#", "]", "[]"];
-	for (var i = 0; i < tests.length; i++) {
-		var s = createTraceryTestRule();
-		//s = "[foo:bax.whoo(bar)](bar)"
-		//splitOnUnprotected();
-		//	diagramParse(s, $("#panel-expansion .panel-content"));
-	}
+/*
+ * Parsing Tracery syntax
+ */
 
+
+/*
+ * (Protected) Rule syntax
+ * Plaintext with inline tags and action
+ * and optionally, ways to keep those from expanding 
+ * eg: "foo", "foo #bar#", "#foo# [bar]#baz#"
+ * Protected "foo (#bar#)"
+ */
+
+function clearAutoExpansions(s, grammar) {
+
+	// Find and replace all toplevel autoexpanders {}
+	var sections = splitIntoTopSections(s, "{");
+
+
+
+	return sections.map(function(section) {
+		if (section.depth === 1) {
+		
+			// TODO, actual expansion
+			var expansion = section.inner;
+			return "***";
+		}
+		return section.inner;
+	}).join("");
 }
 
+function parseRule(s, grammar) {
 
-function parseModifier(mod) {
-	console.log("mod: " + mod);
-	mod = mod.trim();
-	// get first and last parens
-	var parenIndex = mod.indexOf("(");
-	if (parenIndex >= 0) {
-		if (mod.charAt(mod.length - 1) !== ")")
-			console.warn("Poorly formed modifer");
-		return {
-			name: mod.substring(0, parenIndex),
-			parameters: splitOnUnprotected(mod.substring(parenIndex + 1, mod.length - 1), ",")
-		}
-	} else {
-		return {
-			name: mod
-		}
-	}
+	// Clear any autoexpansions
+	if (grammar)
+		s = clearAutoExpansions(s, grammar);
+	var sections = splitIntoTopSections(s, "[(#");
 
-}
+	var parsedSections = sections.map(function(section) {
+		switch (section.openChar) {
+			case "[":
+				return parseAction(section.inner);
+				break;
 
-function parseTagContents(s) {
+			case "#":
+				return parseTag(section.inner);
+				break;
 
-	var sections = [];
-	sections.errors = [];
-	var start = 0;
-	parseProtected(s, {
-		onCloseSection: function(section) {
-			if (section.depth === 1 && section.openChar === "[") {
-				sections.push(section);
-				start = section.end + 1;
-			}
 
-		},
-
-		onOpenSection: function(section) {
-			if (section.depth === 1 && section.openChar === "[") {
-				var text = s.substring(start, section.start).trim();
-				if (text.length > 0) {
-					sections.push({
-						depth: 0,
-						start: start,
-						end: section.start,
-						inner: text
-					});
-				}
-			}
-
-		},
-
-		error: function(error) {
-			sections.errors.push(error);
+			default:
+				return section.inner;
 		}
 	});
 
-	var text = s.substring(start).trim();
-	if (text.length > 0) {
-		sections.push({
-			depth: 0,
-			start: start,
-			end: s.length,
-			inner: s.substring(start)
+
+
+	return parsedSections;
+}
+
+
+/* 
+ * Action syntax
+ * key:rules
+ * key:CLEAR
+ * key:POP
+ */
+function parseAction(raw, grammar) {
+
+	var errors = [];
+	if (grammar)
+		raw = clearAutoExpansions(raw, grammar);
+
+	var raw2 = splitOnUnprotected(raw, [":", "="]);
+	
+	var target = raw2[0];
+	target = parseTarget(target);
+
+	var expression = raw2[1];
+	var parsed = {
+		type: "action",
+		raw: raw,
+		op: raw.charAt(raw2[0].length)
+	};
+
+	if (expression === undefined) {
+		// No expression, just a target, ie, a single action
+		// Means what?
+
+	} else {
+		// The expression is either a string, an array, or a JSON object
+		var type = expression.charAt(0);
+		switch (type) {
+			case "{":
+				// Probably a JSON obj.  Or maybe an autogen rule?
+				parsed.rules = [expression];
+				break;
+			case "[":
+				// A set of rules
+				parsed.expression = expression.trim();
+				if (expression.charAt(expression.length - 1) !== "]") {
+
+					errors.push("No close bracket at the end of rule array: " + inQuotes(expression));
+					expression = expression.substring(1);
+				} else {
+					expression = expression.substring(1, expression.length - 1);
+				}
+
+				parsed.rules = splitOnUnprotected(expression, ",");
+				break;
+			default:
+				// A single rule
+				parsed.rules = [expression];
+				break;
+		}
+	}
+
+
+	if (parsed.rules)
+		parsed.rules = parsed.rules.map(function(rule) {
+			return parseRule(rule, grammar);
+		});
+
+	
+	parsed.target = target;
+	parsed.expression = expression;
+	return parsed;
+}
+
+// Parse something which could be either a tag or an address
+function parseTarget(raw, isModifier) {
+	if (raw.charAt(0) === "/") {
+		var path = raw.substring(1).split("/");
+		return {
+			type: "path",
+			path: path
+		};
+	}
+
+	if (isModifier) {
+		return {
+			type: "modifierKey",
+			key: raw
+		}
+	}
+	return {
+		type: "symbolKey",
+		key: raw
+	}
+}
+
+function parseTag(raw, grammar) {
+	if (grammar)
+		raw = clearAutoExpansions(raw, grammar);
+
+	var sections = splitOnUnprotected(raw, ".");
+	var target = parseTarget(sections[0]);
+	var modifiers = sections.slice(1).map(parseModifier)
+	
+	return {
+		modifiers: modifiers,
+		target: target,
+		raw: raw,
+		type: "tag",
+	};
+}
+
+
+/* 
+ * Modifier
+ * A modifier has a key (or an address?!)
+ */
+function parseModifier(raw, grammar) {
+	var s = splitIntoTopSections(raw, "[(#").filter(function(s) {
+		return s.inner.length > 0
+	});
+	
+	var parsed = {
+		target: parseTarget(s[0].inner, true),
+		raw: raw,
+		type: "modifier",
+	}
+
+	// has parameters
+	if (s.length > 1) {
+		parsed.parameters = splitOnUnprotected(s[1].inner, ",").map(function(s2) {
+			return parseRule(s2, grammar);
 		});
 	}
 
-	return sections;
+	return parsed;;
+}
+
+/*===========================================
+ * Test generators
+ */
+
+function generateProtectedRule(depth) {
+	if (isNaN(depth))
+		depth = 0;
+
+	var sections = [];
+
+	// Create a string of text
+	var count = Math.floor(Math.random() * Math.max(0, 5 - depth * 3) + 1);
+	for (var i = 0; i < count; i++) {
+		var opt = Math.floor(4.5 * Math.pow(Math.random(), 1.9 + .2 * depth));
+		//console.log(depth + ": " + opt + " " + count);
+		// Possible componenets of a rule
+
+		switch (opt) {
+			case 0:
+				// PlainText
+				sections.push(generatePlainText(depth + 1));
+				break;
+
+			case 1:
+				// Tag
+				if (depth < 3) {
+					sections.push(generateTagOrAddress(depth + 1));
+				}
+				break;
+
+			case 2:
+				if (depth < 3)
+				// Action tag
+					sections.push(generateAction(depth + 1));
+				break;
+
+			case 3:
+				// A protected section [foo:#bar#]
+				if (depth > 1)
+					sections.push("(#" + generateTagOrAddress(depth + 1) + "#)");
+
+				// An autoexpand section [#foo#]
+				// is immediately replaced with its expansion
+				// Like the javascript foo.bar vs foo[bar] syntax
+				break;
+		}
+
+
+	}
+	return sections.join("");
 }
 
 
 
-function splitIntoTopSections(s) {
+/*
+ * Action syntax
+ * Does something with rules
+ * foo:bar
+ * 
+ */
+
+function generateAction(depth) {
+
+	var s = "";
+
+	var rules = generateProtectedRule(depth + 1);
+	var count = Math.floor(Math.random() * 4);
+	if (Math.random() > .5) {
+		for (var i = 0; i < count; i++) {
+			rules += "," + generateProtectedRule(depth + 1)
+		}
+
+		rules = "[" + rules + "]";
+	}
+	//return s;
+	return "[" + generateTagName() + ":" + rules + "]";
+}
+
+/*
+ * Tag syntax
+ * A central symbol key
+ */
+function generateTagOrAddress(depth) {
+
+	var s = generateTagName();
+
+	// address
+	if (Math.random() > .5) {
+		s = generateAddress(depth + 1);
+	}
+
+	var modCount = Math.floor(Math.random() * Math.random() * 3);
+	for (var i = 0; i < modCount; i++) {
+		var modName = generateTagName();
+
+		s += "." + modName;
+
+		var paramCount = Math.floor(Math.random() * Math.random() * 3);
+		if (paramCount > 0) {
+
+			for (var j = 0; j < paramCount; j++) {
+
+			}
+		}
+
+	}
+
+	if (depth < 2) {
+		var preCount = Math.floor(Math.random() * Math.random() * 3);
+		var postCount = Math.floor(Math.random() * Math.random() * 3);
+		for (var i = 0; i < preCount; i++) {
+			s += generateAction(depth + 1) + s;
+		}
+
+		for (var i = 0; i < postCount; i++) {
+			s += generateAction(depth + 1);
+		}
+	}
+
+	return "#" + s + "#";
+
+}
+
+function generateTagName() {
+	var s = "";
+	if (Math.random() > .2) {
+		s += generatePlainTextWord();
+	} else {
+		// Generate an autoexpansion tag
+		s += "{#" + generatePlainTextWord() + "#}"
+	}
+
+	return s;
+}
+
+function generateAddress(depth) {
+	var s = "";
+	var len = Math.floor(Math.random() * 4 + 1);
+	for (var i = 0; i < len; i++) {
+		s += "/" + generateTagName();
+
+	}
+	return s;
+}
+
+
+function generatePlainTextWord() {
+	var s = getRandom("abcdefghijklmnopqrstuvwxyz");
+	var len = Math.floor(Math.random() * 4);
+	for (var i = 0; i < len; i++) {
+		if (Math.random() > .4 && i < len - 1)
+			s += getRandom("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+		s += getRandom("abcdefghijklmnopqrstuvwxyz");
+	}
+	return s;
+}
+
+
+function generatePlainText() {
+	var s = "";
+	var len = Math.floor(Math.random() * 4) + 1;
+	for (var i = 0; i < len; i++) {
+		if (i !== 0)
+			s += " ";
+		s += generatePlainTextWord();
+
+		if (Math.random() > .9)
+			s += "\\" + getRandom("(){}[]#".split(""));
+	}
+
+	s += getRandom([".", ", ", "? ", "", "", ""]);
+	return s;
+}
+
+
+
+function splitIntoTopSections(s, sectionTypes) {
 
 	var sections = [];
 	sections.errors = [];
 	var start = 0;
 	parseProtected(s, {
 		onCloseSection: function(section) {
-			if (section.depth === 1) {
-				sections.push(section);
+			if (section.depth === 1 && (sectionTypes === undefined || sectionTypes.includes(section.openChar))) {
+				var topSection = section;
 				start = section.end + 1;
-			}
+				if (topSection.inner.length > 0)
+					sections.push(topSection);
+				else {
+					sections.errors.push("Empty section '" + section.openChar + "" + section.closeChar + "' at " + section.start);
+				}
 
+			}
 		},
 
 		onOpenSection: function(section) {
-			if (section.depth === 1) {
-				sections.push({
+			if (section.depth === 1 && (sectionTypes === undefined || sectionTypes.includes(section.openChar))) {
+
+				// Make a base-level section from the last section to the start of this one
+				var topSection = {
+
 					depth: 0,
 					start: start,
 					end: section.start,
 					inner: s.substring(start, section.start)
-				});
+				};
+				start = section.start;
+				if (topSection.inner.length > 0)
+					sections.push(topSection);
 			}
-
 		},
 
 		error: function(error) {
@@ -123,65 +420,9 @@ function splitIntoTopSections(s) {
 
 
 
-function createTraceryWord() {
-	var s = getRandom("abcdefghijklmnopqrstuvwxyz");
-	var count = Math.floor(Math.random() * 4);
-	for (var i = 0; i < count; i++) {
-		if (Math.random() > .4 && i < count - 1)
-			s += getRandom("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-		s += getRandom("abcdefghijklmnopqrstuvwxyz");
-	}
-	return s;
-}
-
-function createTraceryTestRule(depth) {
-	if (depth === undefined)
-		depth = 0;
-
-	var s = "";
-	for (var i = 0; i < 10; i++) {
-		if (Math.random() > .4) {
-			s += createTraceryWord();
-
-		} else {
-			if (Math.random() > .5 || depth > 2) {
-				s += "#" + createTraceryTestTag(depth + 1) + "#"
-			} else {
-				s += "[" + createTraceryTestAction(depth + 1) + "]"
-			}
-		}
-		if (Math.random() > .6)
-			s += getRandom("    .,!'?").split("");
-	}
-	return s;
-}
-
-function createTraceryTestAction(depth) {
-
-	if (depth === undefined)
-		depth = 0;
-
-	return createTraceryWord() + ":" + createTraceryTestRule(depth + 1);
-}
-
-
-function createTraceryTestTag(depth) {
-	if (depth === undefined)
-		depth = 0;
-
-	var base = createTraceryWord(depth);
-	var count = Math.random() * 3;
-	for (var i = 0; i < count; i++) {
-		base += "." + createTraceryWord(depth);
-	}
-	return base;
-}
-
-
 function splitOnUnprotected(s, splitters) {
 	if (typeof splitters === 'string' || splitters instanceof String)
 		splitters = [splitters];
-
 	var sections = [];
 	var start = 0;
 	parseProtected(s, {
@@ -194,11 +435,13 @@ function splitOnUnprotected(s, splitters) {
 					if (s.startsWith(splitters[i], index)) {
 						splitter = splitters[i];
 					}
-					if (splitter) {
+				}
 
-						sections.push(s.substring(start, index));
-						start = index + splitter.length;
-					}
+				if (splitter) {
+					var s2 = s.substring(start, index);
+					sections.push(s2);
+					start = index + splitter.length;
+
 				}
 			}
 		},
@@ -207,11 +450,15 @@ function splitOnUnprotected(s, splitters) {
 	return sections;
 }
 
-function getUnprotectedIndices(s, splitters) {
-	if (typeof splitters === 'string' || splitters instanceof String)
-		splitters = [splitters];
-}
 
+/*=======================================================================================
+ *
+ * Abstract general-purpose parsing methods
+ */
+
+/*
+ * Get indices of unprotected
+ */
 function testParse(s) {
 	console.log("TEST: " + inQuotes(s));
 	parseProtected(s, {
@@ -228,6 +475,18 @@ function testParse(s) {
 		}
 	});
 }
+
+
+/*
+ * Get indices of unprotected
+ */
+
+function getUnprotectedIndices(s, queries) {
+	if (typeof queries === 'string' || queries instanceof String)
+		queries = [queries];
+}
+
+
 
 function diagramParse(s, holder) {
 	console.log("Diagram " + s);
@@ -316,14 +575,13 @@ function diagramParse(s, holder) {
 		createDiv(rootDiv.children, section);
 	});
 
-	console.log(rootSections);
 }
 
 
 function parseProtected(s, settings) {
 	// Defaults
-	var openChars = settings.openChars ? settings.openChars : "[(#";
-	var closeChars = settings.closeChars ? settings.closeChars : "])#";
+	var openChars = settings.openChars ? settings.openChars : "[({#";
+	var closeChars = settings.closeChars ? settings.closeChars : "])}#";
 	var ignoreInside = settings.ignoreInside ? settings.ignoreInside : "";
 
 	/*
