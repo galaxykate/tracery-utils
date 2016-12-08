@@ -18,15 +18,19 @@ function runTraceryTests() {
 			}]
 		}
 	}
+	/*
 	setFromDotPath(obj, "animals.class", "animalia");
 	setFromDotPath(obj, "animals.subspecies[2].lemur", {
 		name: "lemur"
 	});
 	console.log(obj);
+*/
 
 	console.log(getFromDotPath(obj, "animals.class"));
 	console.log(getFromDotPath(obj, "animals.subspecies[playerNum.current]"));
 
+console.log(getFromSlashPath(obj, "/animals"));
+console.log(getFromSlashPath(obj, "/animals/{/playerNum/current}/name"));
 	/*
 		setFromSlashPath(obj, "animals.subspecies[3].emu", {
 			name: "emu"
@@ -63,7 +67,7 @@ function runTraceryTests() {
 		for (var j = 0; j < testData.length; j++) {
 
 		}
-		for (var j = 0; j < 10; j++) {
+		for (var j = 0; j < 0; j++) {
 
 			var s = testSettings.autogenTest();
 			//s = "[f:[foo,bar,baz]]"

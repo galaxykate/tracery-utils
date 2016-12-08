@@ -20,7 +20,7 @@ function clearAutoExpansions(s, grammar) {
 
 	return sections.map(function(section) {
 		if (section.depth === 1) {
-		
+
 			// TODO, actual expansion
 			var expansion = section.inner;
 			return "***";
@@ -71,7 +71,7 @@ function parseAction(raw, grammar) {
 		raw = clearAutoExpansions(raw, grammar);
 
 	var raw2 = splitOnUnprotected(raw, [":", "="]);
-	
+
 	var target = raw2[0];
 	target = parseTarget(target);
 
@@ -120,7 +120,7 @@ function parseAction(raw, grammar) {
 			return parseRule(rule, grammar);
 		});
 
-	
+
 	parsed.target = target;
 	parsed.expression = expression;
 	return parsed;
@@ -155,7 +155,7 @@ function parseTag(raw, grammar) {
 	var sections = splitOnUnprotected(raw, ".");
 	var target = parseTarget(sections[0]);
 	var modifiers = sections.slice(1).map(parseModifier)
-	
+
 	return {
 		modifiers: modifiers,
 		target: target,
@@ -173,7 +173,7 @@ function parseModifier(raw, grammar) {
 	var s = splitIntoTopSections(raw, "[(#").filter(function(s) {
 		return s.inner.length > 0
 	});
-	
+
 	var parsed = {
 		target: parseTarget(s[0].inner, true),
 		raw: raw,

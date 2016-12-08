@@ -14,7 +14,7 @@ function getFromPath(obj, path) {
 	}
 
 	var last = path[path.length - 1];
-	
+
 	return obj2[last];
 }
 
@@ -36,7 +36,7 @@ function setFromPath(obj, path, val) {
 
 // JS style paths like "foo.bar[5].baz[foo]"
 
-function parseDotPath(obj, path) {
+function parseDotPath(path) {
 	var path2 = [];
 
 	var sections = splitOnUnprotected(path, ".");
@@ -47,7 +47,7 @@ function parseDotPath(obj, path) {
 			if (s2[j].depth === 1) {
 				var val = s2[j].inner;
 				if (isNaN(parseFloat(val))) {
-					var pathNext = getFromDotPath(obj, val);
+					var pathNext = parseDotPath(val);
 					path2.push(pathNext);
 				} else {
 					path2.push(parseFloat(val));
@@ -55,11 +55,12 @@ function parseDotPath(obj, path) {
 			}
 		}
 	}
+
 	return path2;
 }
 
 function getFromDotPath(obj, path) {
-	var path2 = parseDotPath(obj, path);
+	var path2 = parseDotPath(path);
 	return getFromPath(obj, path2);
 }
 
@@ -70,13 +71,21 @@ function setFromDotPath(obj, path, val) {
 
 // Tracery style paths like "/foo/bar/{#foo.bar()#}/{/foo}"
 
-function parseSlashPath() {
-
+function parseSlashPath(path) {
+	
+	if (path.charAt(0) === "/")
+		path = path.substring(1);
+	var path2 = splitOnUnprotected(path, "/").map(function(s) {
+		return s;
+	});
+	
 }
 
-function getFromSlashPath() {
+function getFromSlashPath(obj, path) {
 	// Expand any curly brackets
-	clearAutoExpansions();
+	//path = clearAutoExpansions(path);
+
+	parseSlashPath(path);
 }
 
 
