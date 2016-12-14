@@ -3,377 +3,343 @@
  */
 
 
-/*
- * (Protected) Rule syntax
- * Plaintext with inline tags and action
- * and optionally, ways to keep those from expanding 
- * eg: "foo", "foo #bar#", "#foo# [bar]#baz#"
- * Protected "foo (#bar#)"
- */
-
-function clearAutoExpansions(s, grammar) {
-
-	// Find and replace all toplevel autoexpanders {}
-	var sections = splitIntoTopSections(s, "{");
+// Parse an expression of math, tracery
+function parseExpression(raw) {
 
 
-
-	return sections.map(function(section) {
-		if (section.depth === 1) {
-
-			// TODO, actual expansion
-			var expansion = section.inner;
-			return "***";
-		}
-		return section.inner;
-	}).join("");
-}
-
-function parseRule(s, grammar) {
-
-	// Clear any autoexpansions
-	if (grammar)
-		s = clearAutoExpansions(s, grammar);
-	var sections = splitIntoTopSections(s, "[(#");
-
-	var parsedSections = sections.map(function(section) {
-		switch (section.openChar) {
-			case "[":
-				return parseAction(section.inner);
-				break;
-
-			case "#":
-				return parseTag(section.inner);
-				break;
+	// get unprotected operators
 
 
-			default:
-				return section.inner;
-		}
+	var ops = "|| && >= <= < > == ! ^ % * / + -".split(" ");
+	var s = splitOnUnprotected(raw, ops, true, "(['", ")]'");
+
+	s = s.filter(function(s2) {
+
+		if (typeof s2 === 'string' || s2 instanceof String)
+			return s2.trim().length > 0;
+		return true;
 	});
 
 
 
-	return parsedSections;
-}
+	// turn into neg
+	for (var i = 0; i < s.length - 1; i++) {
+		if (s[i].splitter !== undefined && s[i + 1].splitter !== undefined) {
 
+			// two in a row
+			if (s[i + 1].splitter === "-") {
 
-/* 
- * Action syntax
- * key:rules
- * key:CLEAR
- * key:POP
- */
-function parseAction(raw, grammar) {
-
-	var errors = [];
-	if (grammar)
-		raw = clearAutoExpansions(raw, grammar);
-
-	var raw2 = splitOnUnprotected(raw, [":", "="]);
-
-	var target = raw2[0];
-	target = parseTarget(target);
-
-	var expression = raw2[1];
-	var parsed = {
-		type: "action",
-		raw: raw,
-		op: raw.charAt(raw2[0].length)
-	};
-
-	if (expression === undefined) {
-		// No expression, just a target, ie, a single action
-		// Means what?
-
-	} else {
-		// The expression is either a string, an array, or a JSON object
-		var type = expression.charAt(0);
-		switch (type) {
-			case "{":
-				// Probably a JSON obj.  Or maybe an autogen rule?
-				parsed.rules = [expression];
-				break;
-			case "[":
-				// A set of rules
-				parsed.expression = expression.trim();
-				if (expression.charAt(expression.length - 1) !== "]") {
-
-					errors.push("No close bracket at the end of rule array: " + inQuotes(expression));
-					expression = expression.substring(1);
-				} else {
-					expression = expression.substring(1, expression.length - 1);
-				}
-
-				parsed.rules = splitOnUnprotected(expression, ",");
-				break;
-			default:
-				// A single rule
-				parsed.rules = [expression];
-				break;
+				s[i + 1].splitter = "NEG";
+				s[i + 1].splitterIndex = 7.5;
+			}
 		}
 	}
 
 
-	if (parsed.rules)
-		parsed.rules = parsed.rules.map(function(rule) {
-			return parseRule(rule, grammar);
-		});
+	function buildTree(sections) {
+		if (sections.length === 1) {
 
+			var s1 = sections[0].trim();
 
-	parsed.target = target;
-	parsed.expression = expression;
-	return parsed;
-}
+			// Single section could be text/tracery, number, or address
+			var val = parseFloat(s1);
+			if (!isNaN(val)) {
+				return val;
+			}
 
-// Parse something which could be either a tag or an address
-function parseTarget(raw, isModifier) {
-	if (raw.charAt(0) === "/") {
-		var path = raw.substring(1).split("/");
-		return {
-			type: "path",
-			path: path
-		};
-	}
+			if (s1.charAt(0) === "'") {
+				return parseRule(s1.substring(1, s1.length - 1));
 
-	if (isModifier) {
-		return {
-			type: "modifierKey",
-			key: raw
-		}
-	}
-	return {
-		type: "symbolKey",
-		key: raw
-	}
-}
-
-function parseTag(raw, grammar) {
-	if (grammar)
-		raw = clearAutoExpansions(raw, grammar);
-
-	var sections = splitOnUnprotected(raw, ".");
-	var target = parseTarget(sections[0]);
-	var modifiers = sections.slice(1).map(parseModifier)
-
-	return {
-		modifiers: modifiers,
-		target: target,
-		raw: raw,
-		type: "tag",
-	};
-}
-
-
-/* 
- * Modifier
- * A modifier has a key (or an address?!)
- */
-function parseModifier(raw, grammar) {
-	var s = splitIntoTopSections(raw, "[(#").filter(function(s) {
-		return s.inner.length > 0
-	});
-
-	var parsed = {
-		target: parseTarget(s[0].inner, true),
-		raw: raw,
-		type: "modifier",
-	}
-
-	// has parameters
-	if (s.length > 1) {
-		parsed.parameters = splitOnUnprotected(s[1].inner, ",").map(function(s2) {
-			return parseRule(s2, grammar);
-		});
-	}
-
-	return parsed;;
-}
-
-/*===========================================
- * Test generators
- */
-
-function generateProtectedRule(depth) {
-	if (isNaN(depth))
-		depth = 0;
-
-	var sections = [];
-
-	// Create a string of text
-	var count = Math.floor(Math.random() * Math.max(0, 5 - depth * 3) + 1);
-	for (var i = 0; i < count; i++) {
-		var opt = Math.floor(4.5 * Math.pow(Math.random(), 1.9 + .2 * depth));
-		//console.log(depth + ": " + opt + " " + count);
-		// Possible componenets of a rule
-
-		switch (opt) {
-			case 0:
-				// PlainText
-				sections.push(generatePlainText(depth + 1));
-				break;
-
-			case 1:
-				// Tag
-				if (depth < 3) {
-					sections.push(generateTagOrAddress(depth + 1));
-				}
-				break;
-
-			case 2:
-				if (depth < 3)
-				// Action tag
-					sections.push(generateAction(depth + 1));
-				break;
-
-			case 3:
-				// A protected section [foo:#bar#]
-				if (depth > 1)
-					sections.push("(#" + generateTagOrAddress(depth + 1) + "#)");
-
-				// An autoexpand section [#foo#]
-				// is immediately replaced with its expansion
-				// Like the javascript foo.bar vs foo[bar] syntax
-				break;
+			}
+			
+			return parseDotAddress(s1);
 		}
 
+		/*
+				console.log("Build tree: " + sections.map(function(s) {
+					if (typeof s === 'string' || s instanceof String)
+						return s;
+					return s.splitter;
+				}).join(" "));
+		*/
 
-	}
-	return sections.join("");
-}
+		// get the earliest operator
+		var priority = -99999;
+		var topOp;
+		var topOpIndex;
 
+		for (var i = 0; i < sections.length; i++) {
+			if (sections[i].splitterIndex > priority) {
+				topOp = sections[i];
+				topOpIndex = i;
 
-
-/*
- * Action syntax
- * Does something with rules
- * foo:bar
- * 
- */
-
-function generateAction(depth) {
-
-	var s = "";
-
-	var rules = generateProtectedRule(depth + 1);
-	var count = Math.floor(Math.random() * 4);
-	if (Math.random() > .5) {
-		for (var i = 0; i < count; i++) {
-			rules += "," + generateProtectedRule(depth + 1)
-		}
-
-		rules = "[" + rules + "]";
-	}
-	//return s;
-	return "[" + generateTagName() + ":" + rules + "]";
-}
-
-/*
- * Tag syntax
- * A central symbol key
- */
-function generateTagOrAddress(depth) {
-
-	var s = generateTagName();
-
-	// address
-	if (Math.random() > .5) {
-		s = generateAddress(depth + 1);
-	}
-
-	var modCount = Math.floor(Math.random() * Math.random() * 3);
-	for (var i = 0; i < modCount; i++) {
-		var modName = generateTagName();
-
-		s += "." + modName;
-
-		var paramCount = Math.floor(Math.random() * Math.random() * 3);
-		if (paramCount > 0) {
-
-			for (var j = 0; j < paramCount; j++) {
-
+				priority = sections[i].splitterIndex;
 			}
 		}
 
-	}
 
-	if (depth < 2) {
-		var preCount = Math.floor(Math.random() * Math.random() * 3);
-		var postCount = Math.floor(Math.random() * Math.random() * 3);
-		for (var i = 0; i < preCount; i++) {
-			s += generateAction(depth + 1) + s;
+
+		// split on this one
+		if (topOp) {
+
+			return {
+				type: "expression",
+				op: topOp.splitter,
+				lhs: buildTree(sections.slice(0, topOpIndex)),
+				rhs: buildTree(sections.slice(topOpIndex + 1))
+			}
+
+		} else {
+			console.log("Unknown ", sections);
 		}
 
-		for (var i = 0; i < postCount; i++) {
-			s += generateAction(depth + 1);
+	}
+	var tree = buildTree(s);
+	tree.raw = raw;
+
+
+	return tree;
+
+}
+
+// JS style addresses
+function parseDotAddress(s) {
+	var path = [];
+
+	var s1 = splitOnUnprotected(s, ".");
+	for (var i = 0; i < s1.length; i++) {
+		var s2 = splitIntoTopSections(s1[i], "[");
+		
+		// j=0 will be depth 0, rest will be empty or 
+		path.push(s2[0].inner);
+		for (var j = 1; j < s2.length; j++) {
+			var s3 = s2[j].inner.trim();
+			if (s3.length > 0)
+				path.push(parseExpression(s3));
 		}
 	}
 
-	return "#" + s + "#";
-
+	return {
+		raw: s,
+		type: "path",
+		path: path
+	}
 }
 
-function generateTagName() {
-	var s = "";
-	if (Math.random() > .2) {
-		s += generatePlainTextWord();
-	} else {
-		// Generate an autoexpansion tag
-		s += "{#" + generatePlainTextWord() + "#}"
+
+// Return an address object
+// "foo": symbol key
+// "/foo": object address
+// May have internal rule identifiers /{#foo#}/bar
+function parseAddress(s) {
+	s = s.trim();
+	if (s.length === 0) {
+		console.log("empty address");
+		return undefined;
+	}
+
+	// Path address
+	if (s.charAt(0) === "/") {
+		var path = splitOnUnprotected(s.substring(1), "/");
+		path = path.map(function(s2) {
+			return parseAddress(s2);
+		});
+
+		return {
+			raw: s,
+			type: "path",
+			path: path
+		}
+	}
+
+
+	if (s.indexOf("{") >= 0) {
+		var s2 = splitIntoTopSections(s, "{");
+		return {
+			type: "dynamicKey",
+			raw: s,
+
+			ruleAddress: s2.map(function(s3) {
+
+				if (s3.depth === 0)
+					return s3.inner;
+
+
+
+				return parseRule(s3.inner, true);
+
+			})
+		}
 	}
 
 	return s;
 }
 
-function generateAddress(depth) {
-	var s = "";
-	var len = Math.floor(Math.random() * 4 + 1);
-	for (var i = 0; i < len; i++) {
-		s += "/" + generateTagName();
-
+function parseTag(s) {
+	var parsed = {
+		type: "tag",
+		preactions: [],
+		postactions: [],
+		modifiers: [],
+		raw: s
 	}
-	return s;
+
+	var s2 = splitIntoTopSections(s, "[");
+
+	var inner;
+	for (var i = 0; i < s2.length; i++) {
+		if (s2[i].depth > 0) {
+			if (inner !== undefined)
+				parsed.postactions.push(parseAction(s2[i].inner));
+			else
+				parsed.preactions.push(parseAction(s2[i].inner));
+		} else {
+			if (inner !== undefined) {
+				console.warn("multiple addresses in tag: " + s2[i].inner + " " + inner);
+			}
+			inner = s2[i].inner;
+		}
+	}
+
+	var s3 = splitOnUnprotected(inner, ".");
+	parsed.address = parseAddress(s3[0]);
+
+	// Parse all the modifiers
+	parsed.modifiers = s3.slice(1).map(function(modifierRaw) {
+		var s5 = splitIntoTopSections(modifierRaw, "(");
+
+		var modifier = {
+			type: "modifier",
+			address: parseAddress(s5[0].inner)
+		}
+
+		// Parse parameters
+		if (s5.length > 1) {
+			if (s5.length > 2)
+				console.warn("unexpected sections in modifier " + inQuotes(s4));
+			var paramRaw = splitOnUnprotected(s5[1].inner, ",");
+
+			// Parameters are either arrays [], or rules
+			modifier.parameters = paramRaw.map(function(paramRaw) {
+				var parameter = {
+					type: "parameter",
+				}
+
+				// Array parameter
+				if (paramRaw.charAt(0) === "[" && paramRaw.charAt(paramRaw.length - 1) === "]") {
+					paramRaw = paramRaw.substring(1, paramRaw.length - 1);
+					var rules = splitOnUnprotected(paramRaw, ",");
+
+					parameter.rule = rules.map(function(rule) {
+						return parseRule(rule, true);
+					});
+				} else {
+					// treat as a rule
+					parameter.rule = parseRule(paramRaw, true);
+				}
+
+
+				return parameter;
+			});
+		}
+
+		return modifier;
+	});
+
+	// Parse the address
+	return parsed;
+}
+
+function parseRule(rawRule, protected) {
+	var baseLevelIgnore = "(";
+
+	if (protected)
+		baseLevelIgnore = "";
+
+	var rule = {
+		sections: splitIntoTopSections(rawRule, "({[#", baseLevelIgnore).map(function(section) {
+			switch (section.openChar) {
+
+				// Protected:
+				//  Treat the stuff inside like plaintext "([foo])"
+
+				case "(":
+
+					//	console.log(" " + section.inner);
+					return section.inner;
+					break;
+				case "#":
+					return parseTag(section.inner);
+					break;
+				case "[":
+					return parseAction(section.inner);
+					break;
+				default:
+					return section.inner;
+
+			}
+		}),
+		raw: rawRule,
+		type: "rule",
+	};
+	//	console.log(rule.sections);
+
+	return rule;
+}
+
+function parseAction(rawAction) {
+	var action = {
+		type: "action",
+		op: ":",
+		raw: rawAction
+	}
+
+	var s = splitOnUnprotected(rawAction, ":");
+	action.address = parseAddress(s[0]);
+
+	// Rules exists
+	// Rule types:
+	//  Single rule
+	//  Array [foo,bar,(baz)]
+	//  Object TODO
+	if (s[1]) {
+		var rulesRaw = s[1];
+
+		// Array
+		if (rulesRaw.charAt(0) === "[" && rulesRaw.charAt(rulesRaw.length - 1) === "]") {
+			action.rules = splitOnUnprotected(rulesRaw.substring(1, rulesRaw.length - 1), ",").map(function(s) {
+				return parseRule(s, true);
+			});
+
+		} else if (rulesRaw.charAt(0) === "{" && rulesRaw.charAt(rulesRaw.length - 1) === "}") {
+			//TODO
+		} else {
+			action.rules = parseRule(rulesRaw, true);
+		}
+	}
+	return action;
 }
 
 
-function generatePlainTextWord() {
-	var s = getRandom("abcdefghijklmnopqrstuvwxyz");
-	var len = Math.floor(Math.random() * 4);
-	for (var i = 0; i < len; i++) {
-		if (Math.random() > .4 && i < len - 1)
-			s += getRandom("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-		s += getRandom("abcdefghijklmnopqrstuvwxyz");
-	}
-	return s;
-}
 
-
-function generatePlainText() {
-	var s = "";
-	var len = Math.floor(Math.random() * 4) + 1;
-	for (var i = 0; i < len; i++) {
-		if (i !== 0)
-			s += " ";
-		s += generatePlainTextWord();
-
-		if (Math.random() > .9)
-			s += "\\" + getRandom("(){}[]#".split(""));
-	}
-
-	s += getRandom([".", ", ", "? ", "", "", ""]);
-	return s;
-}
+/*=======================================================================================
+ *
+ * Abstract general-purpose parsing methods
+ */
 
 
 
-function splitIntoTopSections(s, sectionTypes) {
+function splitIntoTopSections(s, sectionTypes, baseLevelIgnore) {
+
 
 	var sections = [];
 	sections.errors = [];
 	var start = 0;
 	parseProtected(s, {
+		baseLevelIgnore: baseLevelIgnore,
+
 		onCloseSection: function(section) {
-			if (section.depth === 1 && (sectionTypes === undefined || sectionTypes.includes(section.openChar))) {
+			if (section.depth === 1 && (sectionTypes === undefined || sectionTypes.indexOf(section.openChar) >= 0)) {
 				var topSection = section;
 				start = section.end + 1;
 				if (topSection.inner.length > 0)
@@ -382,11 +348,13 @@ function splitIntoTopSections(s, sectionTypes) {
 					sections.errors.push("Empty section '" + section.openChar + "" + section.closeChar + "' at " + section.start);
 				}
 
+			} else {
+
 			}
 		},
 
 		onOpenSection: function(section) {
-			if (section.depth === 1 && (sectionTypes === undefined || sectionTypes.includes(section.openChar))) {
+			if (section.depth === 1 && (sectionTypes === undefined || sectionTypes.indexOf(section.openChar) >= 0)) {
 
 				// Make a base-level section from the last section to the start of this one
 				var topSection = {
@@ -414,18 +382,24 @@ function splitIntoTopSections(s, sectionTypes) {
 		inner: s.substring(start)
 	});
 
+	sections = sections.filter(function(s) {
+		return s.inner.length > 0;
+	})
+
 
 	return sections;
 }
 
 
 
-function splitOnUnprotected(s, splitters) {
+function splitOnUnprotected(s, splitters, saveSplitters, openChars, closeChars) {
 	if (typeof splitters === 'string' || splitters instanceof String)
 		splitters = [splitters];
 	var sections = [];
 	var start = 0;
 	parseProtected(s, {
+		openChars: openChars,
+		closeChars: closeChars,
 		onChar: function(c, index, depth) {
 			if (depth === 0) {
 				var splitter = undefined;
@@ -433,16 +407,24 @@ function splitOnUnprotected(s, splitters) {
 
 
 					if (s.startsWith(splitters[i], index)) {
-						splitter = splitters[i];
+						splitter = {
+							splitterIndex: i,
+							index: index,
+							splitter: splitters[i],
+						}
 					}
 				}
 
 				if (splitter) {
 					var s2 = s.substring(start, index);
 					sections.push(s2);
-					start = index + splitter.length;
-
+					start = index + splitter.splitter.length;
+					if (saveSplitters) {
+						sections.push(splitter);
+					}
 				}
+
+
 			}
 		},
 	})
@@ -451,34 +433,9 @@ function splitOnUnprotected(s, splitters) {
 }
 
 
-/*=======================================================================================
- *
- * Abstract general-purpose parsing methods
- */
-
 /*
  * Get indices of unprotected
- */
-function testParse(s) {
-	console.log("TEST: " + inQuotes(s));
-	parseProtected(s, {
-		onCloseSection: function(section) {
-			console.log(tabSpacer(section.depth) + section.openChar + "\t" + inQuotes(section.inner) + "\t" + section.closeChar);
-
-		},
-		onOpenSection: function(section) {
-			console.log(tabSpacer(section.depth) + "start " + section.openChar + section.type);
-		},
-
-		onError: function(s) {
-			console.log("ERROR: " + s);
-		}
-	});
-}
-
-
-/*
- * Get indices of unprotected
+ * TODO
  */
 
 function getUnprotectedIndices(s, queries) {
@@ -488,102 +445,14 @@ function getUnprotectedIndices(s, queries) {
 
 
 
-function diagramParse(s, holder) {
-	console.log("Diagram " + s);
-	var divStack = "";
-
-	function createDiv(holder, section) {
-		var div = $("<div/>", {
-			class: "traceryparse-section"
-		}).appendTo(holder);
-
-		var label = $("<div/>", {
-			class: "traceryparse-label",
-
-		}).appendTo(div);
-
-		if (section) {
-
-			if (section.openChar)
-				$("<div/>", {
-					class: "traceryparse-op",
-					html: section.openChar
-				}).appendTo(label);
-
-			$("<div/>", {
-				class: "traceryparse-text",
-				html: section.inner
-			}).appendTo(label);
-
-			if (section.closeChar)
-				$("<div/>", {
-					class: "traceryparse-op",
-					html: section.closeChar
-				}).appendTo(label);
-
-		} else {
-			label.html(s);
-		}
-
-		div.children = $("<div/>", {
-			class: "traceryparse-children",
-		}).appendTo(div);
-
-		if (section && section.children) {
-			$.each(section.children, function(index, child) {
-				createDiv(div.children, child);
-			})
-		}
-
-		return div;
-
-
-	}
-
-	var rootDiv = createDiv(holder);
-
-	var sectionStack = [];
-	var sections = [];
-	var rootSections = [];
-	parseProtected(s, {
-		onCloseSection: function(section) {
-			console.log(tabSpacer(section.depth) + section.openChar + "\t" + inQuotes(section.inner) + "\t" + section.closeChar);
-
-
-			sectionStack.pop(section);
-
-			if (sectionStack.length === 0) {
-				rootSections.push(section);
-			} else {
-				section.parent = sectionStack[sectionStack.length - 1];
-				section.parent.children.push(section);
-			}
-		},
-		onOpenSection: function(section) {
-			section.children = [];
-			sectionStack.push(section);
-			sections.push(section);
-		},
-
-		onError: function(s) {
-			console.log("ERROR: " + s);
-		}
-	});
-
-	$.each(rootSections, function(index, section) {
-		console.log(section);
-		createDiv(rootDiv.children, section);
-	});
-
-}
-
-
+// Hero function
+// Runs all the parsing stuff
 function parseProtected(s, settings) {
+
 	// Defaults
 	var openChars = settings.openChars ? settings.openChars : "[({#";
 	var closeChars = settings.closeChars ? settings.closeChars : "])}#";
-	var ignoreInside = settings.ignoreInside ? settings.ignoreInside : "";
-
+	var baseLevelIgnore = settings.baseLevelIgnore ? settings.baseLevelIgnore : "";
 	/*
 		console.log("IgnoreInside: " + ignoreInside);
 		console.log("CloseChars: " + closeChars);
@@ -616,13 +485,13 @@ function parseProtected(s, settings) {
 
 					var top = depth[depth.length - 1];
 
-					var ignoreAll = depth.length > 0 && depth[depth.length - 1].ignoreInside;
-
+					var ignore = depth.length === 0 && baseLevelIgnore.indexOf(c) > -1;
 
 					var pastMaxDepth = settings.maxDepth && (depth.length < settings.maxDepth);
 
 					// Ignoring everything in here until the close character is reached
-					if (pastMaxDepth || ignoreAll) {
+					if (pastMaxDepth || ignore) {
+
 						if (settings.onChar)
 							settings.onChar(c, i, depth.length, s);
 					} else {
@@ -646,10 +515,7 @@ function parseProtected(s, settings) {
 								type: openIndex,
 							}
 
-							// Ignore everything inside of this section, until the section closer appears
-							if (ignoreInside.indexOf(c) >= 0) {
-								section.ignoreInside = true;
-							}
+
 
 							depth.push(section);
 							var top = depth[depth.length - 1];
@@ -689,6 +555,27 @@ function getRandom(arr) {
 
 function inQuotes(s) {
 	return '"' + s + '"';
+}
+
+function inSingleQuotes(s) {
+	return "'" + s + "'";
+}
+
+
+function inTags(s) {
+	return '#' + s + '#';
+}
+
+function inCurlyBrackets(s) {
+	return '{' + s + '}';
+}
+
+function inSquareBrackets(s) {
+	return '[' + s + ']';
+}
+
+function inParensBrackets(s) {
+	return '(' + s + ')';
 }
 
 function tabSpacer(count) {

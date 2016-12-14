@@ -2,35 +2,64 @@
 
 function getFromPath(obj, path) {
 	var obj2 = obj;
+	var next;
+	for (var i = 0; i < path.length; i++) {
+		next = path[i];
 
-	for (var i = 0; i < path.length - 1; i++) {
-		var s = path[i];
-		if (!obj2[s]) {
-			console.log("No " + s + " found");
-			return undefined;
+		// Subpath: get the name of this link by following this subpath
+		if (Array.isArray(next)) {
+			var subpath = next;
+			next = getFromPath(obj, subpath);
+			if (next === undefined) {
+				console.warn("No object path found for " + inSquareBrackets(subpath));
+				return undefined;
+			}
 		}
 
-		obj2 = obj2[s];
+
+		if (i < path.length - 1) {
+			if (!obj2[next]) {
+				console.warn("No address " + inQuotes(next) + " found in path " + inSquareBrackets(path));
+				return undefined;
+			}
+
+			obj2 = obj2[next];
+		}
 	}
 
-	var last = path[path.length - 1];
-
-	return obj2[last];
+	return obj2[next];
 }
 
 function setFromPath(obj, path, val) {
 	var obj2 = obj;
+	var next;
+	for (var i = 0; i < path.length; i++) {
+		next = path[i];
 
-	for (var i = 0; i < path.length - 1; i++) {
-		var s = path[i];
-		if (!obj2[s])
-			obj2[s] = {};
+		// Subpath: get the name of this link by following this subpath
+		if (Array.isArray(next)) {
+			var subpath = next;
+			next = getFromPath(obj, subpath);
+			if (next === undefined) {
+				console.warn("No object path found for " + inSquareBrackets(subpath));
+				return undefined;
+			}
+		}
 
-		obj2 = obj2[s];
+
+		if (i < path.length - 1) {
+			if (obj2[next] === undefined) {
+				console.log("Create property " + inQuotes(next));
+				obj2[next] = {};
+			}
+		}
+
+
+		obj2 = obj2[next];
+
 	}
 
-	var last = path[path.length - 1];
-	obj2[last] = val;
+	return obj2[next];
 }
 
 
@@ -62,6 +91,7 @@ function parseDotPath(path) {
 function getFromDotPath(obj, path) {
 	var path2 = parseDotPath(path);
 	return getFromPath(obj, path2);
+	console.log(path2);
 }
 
 function setFromDotPath(obj, path, val) {
@@ -72,20 +102,27 @@ function setFromDotPath(obj, path, val) {
 // Tracery style paths like "/foo/bar/{#foo.bar()#}/{/foo}"
 
 function parseSlashPath(path) {
-	
+
 	if (path.charAt(0) === "/")
 		path = path.substring(1);
+
 	var path2 = splitOnUnprotected(path, "/").map(function(s) {
+		if (s.charAt(0) === "{" && s.charAt(s.length - 1) === "}") {
+			return parseSlashPath(s.substring(1, s.length - 1));
+		}
 		return s;
 	});
-	
+
+	return path2;
 }
 
 function getFromSlashPath(obj, path) {
 	// Expand any curly brackets
 	//path = clearAutoExpansions(path);
 
-	parseSlashPath(path);
+	var path2 = parseSlashPath(path);
+
+	return getFromPath(obj, path2);
 }
 
 
